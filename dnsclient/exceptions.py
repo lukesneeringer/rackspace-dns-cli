@@ -83,6 +83,8 @@ class ClientException(Exception):
 
     def __str__(self):
         formatted_string = "%s (HTTP %s)" % (self.message, self.code)
+        if self.details:
+            formatted_string += ' - %s' % self.details
         if self.request_id:
             formatted_string += " (Request-ID: %s)" % self.request_id
 
@@ -163,7 +165,9 @@ def from_response(response, body):
         message = "n/a"
         details = "n/a"
         if hasattr(body, 'keys'):
-            error = body[body.keys()[0]]
+            error = body
+            if 'message' not in body.keys() or 'details' not in body.keys():
+                error = body[body.keys()[0]]
             message = error.get('message', None)
             details = error.get('details', None)
         return cls(code=response.status, message=message, details=details,
