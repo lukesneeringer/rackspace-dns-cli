@@ -47,16 +47,19 @@ class Manager(utils.HookableMixin):
     def __init__(self, api):
         self.api = api
 
-    def _list(self, url, response_key, obj_class=None, body=None):
+    def _list(self, url, response_key, obj_class=None, body=None, offset=0):
+        # if we were provided an offset, append it to the URL
+        _url = url
+        if offset:
+            _url += '?offset=%d' % offset
+
+        # retrieve the data from Rackspace
         if body:
-            _resp, body = self.api.client.post(url, body=body)
+            _resp, content = self.api.client.post(_url, body=body)
         else:
-            _resp, body = self.api.client.get(url)
+            _resp, content = self.api.client.get(_url)
 
-        if obj_class is None:
-            obj_class = self.resource_class
-
-        data = body[response_key]
+        data = content[response_key]
         # NOTE(ja): keystone returns values as list as {'values': [ ... ]}
         #           unlike other services which just return the list...
         if isinstance(data, dict):
@@ -64,6 +67,26 @@ class Manager(utils.HookableMixin):
                 data = data['values']
             except KeyError:
                 pass
+
+        # sanity check: are there multiple pages of data?
+        # the Rackspace DNS API paginates, with a limit of 100 items per page,
+        #   and sends down a link to request more
+        # if we get such a link, we should continue to request more until
+        #   there is no "next" link remaining, since the user asked to see
+        #   the entire list, not just the first 100 entries
+        if 'totalEntries' in content and content['totalEntries'] > 100 + offset:
+            data += self._list(url, response_key, obj_class=obj_class, body=body, offset=offset + 100)
+
+        # now, was this a recursive call to self._list?
+        # if there were more than 100 items in the list, then this function was
+        #   called recusrively, but we want a single list -- therefore, send back
+        #   just the raw data, which will be appended to our caller's data list
+        if offset:
+            return data
+
+        # okay, our list is complete, back to what we were doing
+        if obj_class is None:
+            obj_class = self.resource_class
 
         with self.completion_cache('human_id', obj_class, mode="w"):
             with self.completion_cache('uuid', obj_class, mode="w"):
